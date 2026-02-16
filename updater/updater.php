@@ -45,7 +45,10 @@ class RM_Plugin_Updater {
         if ( $this->gh_token ) {
             $headers['Authorization'] = 'token ' . $this->gh_token;
         }
-        $args = [ 'headers' => $headers ];
+        $args = [
+            'headers' => $headers,
+            'timeout' => 8,
+        ];
         $response = wp_remote_get( $url, $args );
 
         if ( is_wp_error( $response ) ) return false;
@@ -56,7 +59,7 @@ class RM_Plugin_Updater {
     public function check_update( $transient ) {
         if ( empty( $transient->checked ) || ! isset( $transient->checked[ $this->basename ] ) ) return $transient;
         $release = $this->get_github_release();
-        if ( ! $release || ! isset($release->tag_name) ) return $transient;
+        if ( ! $release || ! isset( $release->tag_name ) || empty( $release->zipball_url ) ) return $transient;
 
         $current_version = $transient->checked[ $this->basename ];
         $new_version = ltrim( $release->tag_name, 'v' );
@@ -78,6 +81,8 @@ class RM_Plugin_Updater {
         $release = $this->get_github_release();
         if ( ! $release ) return $result;
 
+        $changelog = $release->body ?? '';
+
         $res = new stdClass();
         $res->name = 'RM GitHub Plugin';
         $res->slug = $this->plugin_slug;
@@ -85,7 +90,8 @@ class RM_Plugin_Updater {
         $res->download_link = $release->zipball_url;
         $res->sections = [
             'description' => 'Updates hosted on GitHub.',
-            'changelog'   => $release->body
+            // Sanitize release body to avoid arbitrary HTML from GitHub notes
+            'changelog'   => wp_kses_post( wpautop( $changelog ) ),
         ];
         return $res;
     }
@@ -134,8 +140,11 @@ class RM_Plugin_Updater {
     }
 
     public function process_manual_check() {
-        if ( ( $_GET['gh_check'] ?? '' ) !== $this->plugin_slug ) return;
-        if ( ! current_user_can( 'update_plugins' ) || ! wp_verify_nonce( $_GET['nonce'] ?? '', 'gh_check' ) ) return;
+        $gh_check = sanitize_text_field( wp_unslash( $_GET['gh_check'] ?? '' ) );
+        $nonce    = sanitize_text_field( wp_unslash( $_GET['nonce'] ?? '' ) );
+
+        if ( $gh_check !== $this->plugin_slug ) return;
+        if ( ! current_user_can( 'update_plugins' ) || ! wp_verify_nonce( $nonce, 'gh_check' ) ) return;
         
         delete_site_transient( 'update_plugins' );
         wp_redirect( admin_url( 'plugins.php?updated=1' ) );
