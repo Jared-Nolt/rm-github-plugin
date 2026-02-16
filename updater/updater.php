@@ -5,8 +5,8 @@ class RM_Plugin_Updater {
     private $basename;
 
     // --- CONFIGURATION ---
-    private $gh_user = 'PLACEHOLDER_USER'; 
-    private $gh_repo = 'PLACEHOLDER_REPO'; 
+    private $gh_user = 'Jared-Nolt'; 
+    private $gh_repo = 'rm-github-plugin'; 
     // ---------------------
 
     public function __construct( $file ) {
