@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:  RM GitHub Plugin
- * Version:      1.2.0
+ * Version:      2.1.0
  * Description:  A professional plugin with GitHub update integration.
  * Author:       Plugin updater
  * GitHub:      https://github.com/Jared-Nolt/rm-github-plugin
