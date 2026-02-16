@@ -13,11 +13,15 @@ class RM_Plugin_Updater {
     public function __construct( $file ) {
         $this->file = $file;
         $this->basename = plugin_basename( $file );
-        $this->plugin_slug = dirname( $this->basename );
+
+        // Derive a reliable slug even if the plugin lives directly in plugins/ (dirname would be '.').
+        $slug = trim( dirname( $this->basename ), '/' );
+        $this->plugin_slug = ( $slug && $slug !== '.' ) ? $slug : basename( $this->basename, '.php' );
         // Allow token via wp-config.php define('RM_GH_TOKEN', 'xxx') or filter('rm_github_token') for private repos/rate limits
         $this->gh_token = defined( 'RM_GH_TOKEN' ) ? RM_GH_TOKEN : apply_filters( 'rm_github_token', '' );
 
-        add_filter( 'site_transient_update_plugins', [ $this, 'check_update' ] );
+        // Run before WordPress saves the transient so our data is persisted.
+        add_filter( 'pre_set_site_transient_update_plugins', [ $this, 'check_update' ] );
         add_filter( 'plugins_api', [ $this, 'plugin_popup' ], 10, 3 );
         add_filter( 'http_request_args', [ $this, 'maybe_authenticate_download' ], 10, 2 );
         add_filter( 'upgrader_source_selection', [ $this, 'ensure_correct_folder' ], 10, 4 );
@@ -34,7 +38,10 @@ class RM_Plugin_Updater {
 
     private function get_github_release() {
         $url = "https://api.github.com/repos/{$this->gh_user}/{$this->gh_repo}/releases/latest";
-        $headers = [ 'User-Agent' => 'WordPress/' . get_bloginfo('version') ];
+        $headers = [
+            'User-Agent' => 'WordPress/' . get_bloginfo( 'version' ),
+            'Accept'     => 'application/vnd.github+json',
+        ];
         if ( $this->gh_token ) {
             $headers['Authorization'] = 'token ' . $this->gh_token;
         }
@@ -42,11 +49,12 @@ class RM_Plugin_Updater {
         $response = wp_remote_get( $url, $args );
 
         if ( is_wp_error( $response ) ) return false;
+        if ( (int) wp_remote_retrieve_response_code( $response ) !== 200 ) return false;
         return json_decode( wp_remote_retrieve_body( $response ) );
     }
 
     public function check_update( $transient ) {
-        if ( empty( $transient->checked ) ) return $transient;
+        if ( empty( $transient->checked ) || ! isset( $transient->checked[ $this->basename ] ) ) return $transient;
         $release = $this->get_github_release();
         if ( ! $release || ! isset($release->tag_name) ) return $transient;
 
