@@ -3,6 +3,7 @@ class RM_Plugin_Updater {
     private $file;
     private $plugin_slug;
     private $basename;
+    private $gh_token;
 
     // --- CONFIGURATION ---
     private $gh_user = 'Jared-Nolt'; 
@@ -13,9 +14,13 @@ class RM_Plugin_Updater {
         $this->file = $file;
         $this->basename = plugin_basename( $file );
         $this->plugin_slug = dirname( $this->basename );
+        // Allow token via wp-config.php define('RM_GH_TOKEN', 'xxx') or filter('rm_github_token') for private repos/rate limits
+        $this->gh_token = defined( 'RM_GH_TOKEN' ) ? RM_GH_TOKEN : apply_filters( 'rm_github_token', '' );
 
         add_filter( 'site_transient_update_plugins', [ $this, 'check_update' ] );
         add_filter( 'plugins_api', [ $this, 'plugin_popup' ], 10, 3 );
+        add_filter( 'http_request_args', [ $this, 'maybe_authenticate_download' ], 10, 2 );
+        add_filter( 'upgrader_source_selection', [ $this, 'ensure_correct_folder' ], 10, 4 );
 
         /**
          * FORCE UPDATE CODE START
@@ -29,7 +34,11 @@ class RM_Plugin_Updater {
 
     private function get_github_release() {
         $url = "https://api.github.com/repos/{$this->gh_user}/{$this->gh_repo}/releases/latest";
-        $args = [ 'headers' => [ 'User-Agent' => 'WordPress/' . get_bloginfo('version') ] ];
+        $headers = [ 'User-Agent' => 'WordPress/' . get_bloginfo('version') ];
+        if ( $this->gh_token ) {
+            $headers['Authorization'] = 'token ' . $this->gh_token;
+        }
+        $args = [ 'headers' => $headers ];
         $response = wp_remote_get( $url, $args );
 
         if ( is_wp_error( $response ) ) return false;
@@ -71,6 +80,42 @@ class RM_Plugin_Updater {
             'changelog'   => $release->body
         ];
         return $res;
+    }
+
+    /**
+     * Add auth headers to GitHub API and package downloads when a token is configured.
+     */
+    public function maybe_authenticate_download( $args, $url ) {
+        if ( ! $this->gh_token ) return $args;
+        $is_github = strpos( $url, 'github.com' ) !== false || strpos( $url, 'api.github.com' ) !== false;
+        if ( ! $is_github ) return $args;
+
+        if ( empty( $args['headers'] ) || ! is_array( $args['headers'] ) ) {
+            $args['headers'] = [];
+        }
+        // Preserve existing headers and add auth + UA for rate limits/private repos
+        $args['headers']['Authorization'] = 'token ' . $this->gh_token;
+        $args['headers']['User-Agent'] = $args['headers']['User-Agent'] ?? 'WordPress/' . get_bloginfo( 'version' );
+        return $args;
+    }
+
+    /**
+     * Ensure the unpacked folder matches the plugin slug so updates overwrite correctly.
+     */
+    public function ensure_correct_folder( $source, $remote_source, $upgrader, $hook_extra ) {
+        if ( empty( $hook_extra['plugin'] ) || $hook_extra['plugin'] !== $this->basename ) return $source;
+        $desired = trailingslashit( $remote_source ) . $this->plugin_slug;
+        $source = untrailingslashit( $source );
+
+        if ( basename( $source ) === $this->plugin_slug ) return $source; // Already correct
+
+        // Try to rename the extracted folder to the plugin slug to match WordPress expectations
+        if ( @rename( $source, $desired ) ) {
+            return $desired;
+        }
+
+        // Fallback: if rename fails, leave as-is to avoid breaking the upgrade
+        return $source;
     }
 
     // --- MANUAL CHECK LOGIC ---
