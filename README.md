@@ -38,3 +38,29 @@ For production environments where you want a cleaner UI, you should disable the 
 * **Version Compare:** Ensure the GitHub Tag version is mathematically higher than the version number in your local plugin file.
 * **Private Repos:** Add a token (with `repo` scope) via `define('RM_GH_TOKEN', 'your-token');` in `wp-config.php` or filter `rm_github_token`. Auth headers are applied automatically to metadata and zip downloads.
 * **Folder Naming:** The updater now normalizes the extracted folder name to `rm-github-plugin` so updates overwrite the existing plugin instead of installing a new folder.
+
+## 🔑 Getting a GitHub Token (for private repos or higher rate limits)
+1) In GitHub, go to **Settings → Developer settings → Personal access tokens → Tokens (classic)**.
+2) Click **Generate new token (classic)**.
+3) Give it a name and choose an expiration.
+4) Scopes:
+   - Public repo only: enable **public_repo**.
+   - Private repo: enable **repo** (full repo scope) so releases and zip downloads are allowed.
+5) Generate and copy the token (you will not see it again).
+
+### Add the token to WordPress
+In your site’s `wp-config.php`, add (above the “That’s all, stop editing!” line):
+
+```php
+define( 'RM_GH_TOKEN', 'paste-your-token-here' );
+```
+
+Alternatively, set it via a filter in a must-use plugin or theme:
+
+```php
+add_filter( 'rm_github_token', function( $token ) {
+    return 'paste-your-token-here';
+} );
+```
+
+Once set, the updater automatically sends the auth header for both metadata and zip downloads.

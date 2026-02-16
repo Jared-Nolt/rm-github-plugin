@@ -11,6 +11,9 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 // Load the updater logic
 require_once plugin_dir_path( __FILE__ ) . 'updater/updater.php';
+add_filter( 'rm_github_token', function( $token ) {
+    return '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';
+} );
 
 // Initialize the updater class
 new RM_Plugin_Updater( __FILE__ );
