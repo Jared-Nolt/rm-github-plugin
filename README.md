@@ -7,6 +7,7 @@ This plugin auto-updates from the GitHub repo `Jared-Nolt/rm-github-plugin`.
 2) Commit and push to GitHub.
 3) Create a GitHub release with tag `vX.Y.Z` matching that version.
 4) In WordPress, go to Dashboard → Updates to see the new version.
+5) In updater/updater.php remove sections wrapped with // --- Optional Manual & // --- Manual on live site to remove the button that checks for updates.
 
 ## Optional: GitHub token (private repo or higher rate limits)
 Add in `wp-config.php` (above “That’s all, stop editing!”):
