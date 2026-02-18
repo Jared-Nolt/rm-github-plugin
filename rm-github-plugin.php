@@ -9,11 +9,13 @@
 
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-// Load the updater logic
-require_once plugin_dir_path( __FILE__ ) . 'updater/updater.php';
-add_filter( 'rm_github_token', function( $token ) {
-    return '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';
-} );
+define( 'RM_GITHUB_PLUGIN_VERSION', '2.1.0' );
+define( 'RM_GITHUB_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 
-// Initialize the updater class
-new RM_Plugin_Updater( __FILE__ );
+// Load the updater logic
+require_once RM_GITHUB_PLUGIN_DIR . 'updater/updater.php';
+
+// Initialize the updater class in admin context
+if ( is_admin() && class_exists( '\RM_GitHub_Plugin\Updater' ) ) {
+    new \RM_GitHub_Plugin\Updater();
+}

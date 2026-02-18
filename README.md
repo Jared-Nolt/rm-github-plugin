@@ -1,66 +1,29 @@
-# RM GitHub Update Integration
+# RM GitHub Updater — Quick Start
 
-This plugin is configured to receive automatic update notifications directly from the GitHub repository `Jared-Nolt/rm-github-plugin`.
+This plugin auto-updates from the GitHub repo `Jared-Nolt/rm-github-plugin`.
 
-## 🟢 Project Configuration
-* **Username:** Jared-Nolt
-* **Repository:** rm-github-plugin
-* **Prefix:** RM_
-* **Logic Location:** `/updater/updater.php`
+## Ship a new version
+1) Open `rm-github-plugin.php`, bump the `Version:` header and the `RM_GITHUB_PLUGIN_VERSION` constant.
+2) Commit and push to GitHub.
+3) Create a GitHub release with tag `vX.Y.Z` matching that version.
+4) In WordPress, go to Dashboard → Updates to see the new version.
 
-## 🛠 How to Publish an Update
-To trigger an update notification on live WordPress sites, follow these exact steps:
-
-1.  **Bump Version:** Open `rm-github-plugin.php` and change the `Version:` header (e.g., from `1.0.0` to `1.0.1`).
-2.  **Commit & Push:** Push your code changes to the main branch on GitHub.
-3.  **Create Release:** * Go to your GitHub repository page.
-    * Click **Releases** (on the right sidebar).
-    * Click **Draft a new release**.
-    * **Tag version:** Type the version number exactly (e.g., `1.0.1`).
-    * **Release title:** Give it a name (e.g., `Version 1.0.1`).
-    * **Description:** Add your changelog notes here.
-4.  **Publish:** Click **Publish release**.
-
-## ⚠️ Removing the "Check for Updates" Link
-For production environments where you want a cleaner UI, you should disable the manual "Check for Updates" link. 
-
-1.  Open `updater/updater.php`.
-2.  Find the section labeled `FORCE UPDATE CODE START`.
-3.  Delete or comment out the following two lines:
-    ```php
-    add_filter( "plugin_action_links_{$this->basename}", [ $this, 'add_check_link' ] );
-    add_action( 'admin_init', [ $this, 'process_manual_check' ] );
-    ```
-
-## 🔍 Troubleshooting
-* **Update not showing?** WordPress caches update checks for ~12 hours. Use the "Check for Updates" link on the Plugins page to force a refresh.
-* **404 Error on Download?** Ensure your GitHub repository is set to **Public**. Private repositories require an extra Access Token in the header logic.
-* **Version Compare:** Ensure the GitHub Tag version is mathematically higher than the version number in your local plugin file.
-* **Private Repos:** Add a token (with `repo` scope) via `define('RM_GH_TOKEN', 'your-token');` in `wp-config.php` or filter `rm_github_token`. Auth headers are applied automatically to metadata and zip downloads.
-* **Folder Naming:** The updater now normalizes the extracted folder name to `rm-github-plugin` so updates overwrite the existing plugin instead of installing a new folder.
-
-## 🔑 Getting a GitHub Token (for private repos or higher rate limits)
-1) In GitHub, go to **Settings → Developer settings → Personal access tokens → Tokens (classic)**.
-2) Click **Generate new token (classic)**.
-3) Give it a name and choose an expiration.
-4) Scopes:
-   - Public repo only: enable **public_repo**.
-   - Private repo: enable **repo** (full repo scope) so releases and zip downloads are allowed.
-5) Generate and copy the token (you will not see it again).
-
-### Add the token to WordPress
-In your site’s `wp-config.php`, add (above the “That’s all, stop editing!” line):
-
+## Optional: GitHub token (private repo or higher rate limits)
+Add in `wp-config.php` (above “That’s all, stop editing!”):
 ```php
-define( 'RM_GH_TOKEN', 'paste-your-token-here' );
+define( 'RM_GITHUB_PLUGIN_TOKEN', 'paste-your-token-here' );
 ```
 
-Alternatively, set it via a filter in a must-use plugin or theme:
-
+## Optional: disable SSL checks in local/dev
+Add in `wp-config.php` (not recommended for production):
 ```php
-add_filter( 'rm_github_token', function( $token ) {
-    return 'paste-your-token-here';
-} );
+define( 'RM_GITHUB_PLUGIN_DEV_MODE', true );
 ```
 
-Once set, the updater automatically sends the auth header for both metadata and zip downloads.
+## Force an immediate check
+On the Plugins page, click “Check for updates” under RM GitHub Plugin to clear the cache and re-fetch.
+
+## Common issues
+- Not seeing the update? Wait for WP cache (~12h) or use the “Check for updates” link.
+- 404 on download? Ensure the repo is public or set `RM_GITHUB_PLUGIN_TOKEN` for private.
+- Tag mismatch? Release tag (e.g., `v2.1.1`) must match the plugin version header.

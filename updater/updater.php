@@ -1,153 +1,192 @@
 <?php
-class RM_Plugin_Updater {
-    private $file;
-    private $plugin_slug;
+
+namespace RM_GitHub_Plugin;
+
+class Updater {
+
+    // Update these four values for your plugin
+    private $repo_owner   = 'Jared-Nolt';
+    private $repo_name    = 'rm-github-plugin';
+    private $plugin_file  = 'rm-github-plugin.php'; // main plugin file name
+    private $plugin_name  = 'RM GitHub Plugin';
+
+    public $plugin_slug;
+    public $version;
+    public $cache_key;
+    public $cache_allowed;
+
+    private $auth_token;
     private $basename;
-    private $gh_token;
 
-    // --- CONFIGURATION ---
-    private $gh_user = 'Jared-Nolt'; 
-    private $gh_repo = 'rm-github-plugin'; 
-    // ---------------------
+    public function __construct() {
 
-    public function __construct( $file ) {
-        $this->file = $file;
-        $this->basename = plugin_basename( $file );
+        // Optional: disable SSL checks in dev if you set RM_GITHUB_PLUGIN_DEV_MODE
+        if ( defined( 'RM_GITHUB_PLUGIN_DEV_MODE' ) ) {
+            add_filter( 'https_ssl_verify', '__return_false' );
+            add_filter( 'https_local_ssl_verify', '__return_false' );
+            add_filter( 'http_request_host_is_external', '__return_true' );
+        }
 
-        // Derive a reliable slug even if the plugin lives directly in plugins/ (dirname would be '.').
-        $slug = trim( dirname( $this->basename ), '/' );
-        $this->plugin_slug = ( $slug && $slug !== '.' ) ? $slug : basename( $this->basename, '.php' );
-        // Allow token via wp-config.php define('RM_GH_TOKEN', 'xxx') or filter('rm_github_token') for private repos/rate limits
-        $this->gh_token = defined( 'RM_GH_TOKEN' ) ? RM_GH_TOKEN : apply_filters( 'rm_github_token', '' );
+        $this->plugin_slug   = dirname( plugin_basename( __DIR__ ) );
+        $this->version       = defined( 'RM_GITHUB_PLUGIN_VERSION' ) ? \RM_GITHUB_PLUGIN_VERSION : '1.0.0';
+        $this->cache_key     = 'rm_github_plugin_updater';
+        $this->cache_allowed = false; // cache GitHub responses to avoid rate limits
+        $this->basename      = $this->plugin_slug . '/' . $this->plugin_file;
+        $this->auth_token    = defined( 'RM_GITHUB_PLUGIN_TOKEN' ) ? RM_GITHUB_PLUGIN_TOKEN : '';
 
-        // Run before WordPress saves the transient so our data is persisted.
-        add_filter( 'pre_set_site_transient_update_plugins', [ $this, 'check_update' ] );
-        add_filter( 'plugins_api', [ $this, 'plugin_popup' ], 10, 3 );
+        add_filter( 'plugins_api', [ $this, 'info' ], 20, 3 );
+        add_filter( 'site_transient_update_plugins', [ $this, 'update' ] );
+        add_action( 'upgrader_process_complete', [ $this, 'purge' ], 10, 2 );
+
+        // Optional helpers: auth headers for GitHub + manual "Check for updates" link
         add_filter( 'http_request_args', [ $this, 'maybe_authenticate_download' ], 10, 2 );
-        add_filter( 'upgrader_source_selection', [ $this, 'ensure_correct_folder' ], 10, 4 );
-
-        /**
-         * FORCE UPDATE CODE START
-         * NOTE: Remove the two lines below before deploying to a production site 
-         * if you want to prevent users from manually clearing the update cache.
-         */
         add_filter( "plugin_action_links_{$this->basename}", [ $this, 'add_check_link' ] );
         add_action( 'admin_init', [ $this, 'process_manual_check' ] );
-        /** FORCE UPDATE CODE END **/
     }
 
-    private function get_github_release() {
-        $url = "https://api.github.com/repos/{$this->gh_user}/{$this->gh_repo}/releases/latest";
-        $headers = [
-            'User-Agent' => 'WordPress/' . get_bloginfo( 'version' ),
-            'Accept'     => 'application/vnd.github+json',
-        ];
-        if ( $this->gh_token ) {
-            $headers['Authorization'] = 'token ' . $this->gh_token;
-        }
-        $args = [
-            'headers' => $headers,
-            'timeout' => 8,
-        ];
-        $response = wp_remote_get( $url, $args );
+    private function request() {
+        $remote = get_transient( $this->cache_key );
 
-        if ( is_wp_error( $response ) ) return false;
-        if ( (int) wp_remote_retrieve_response_code( $response ) !== 200 ) return false;
-        return json_decode( wp_remote_retrieve_body( $response ) );
+        if ( false === $remote || ! $this->cache_allowed ) {
+            $remote = wp_remote_get( 'https://api.github.com/repos/' . $this->repo_owner . '/' . $this->repo_name . '/releases/latest', [
+                    'timeout' => 10,
+                    'headers' => [
+                        'Accept'     => 'application/vnd.github.v3+json',
+                        'User-Agent' => 'WordPress/' . get_bloginfo( 'version' ) . '; ' . home_url( '/' ),
+                        'Authorization' => $this->auth_token ? 'token ' . $this->auth_token : '',
+                    ],
+                ]
+            );
+
+            if ( is_wp_error( $remote ) || 200 !== wp_remote_retrieve_response_code( $remote ) || empty( wp_remote_retrieve_body( $remote ) ) ) {
+                return false;
+            }
+
+            set_transient( $this->cache_key, $remote, 6 * HOUR_IN_SECONDS );
+        }
+
+        return json_decode( wp_remote_retrieve_body( $remote ) );
     }
 
-    public function check_update( $transient ) {
-        if ( empty( $transient->checked ) || ! isset( $transient->checked[ $this->basename ] ) ) return $transient;
-        $release = $this->get_github_release();
-        if ( ! $release || ! isset( $release->tag_name ) || empty( $release->zipball_url ) ) return $transient;
-
-        $current_version = $transient->checked[ $this->basename ];
-        $new_version = ltrim( $release->tag_name, 'v' );
-
-        if ( version_compare( $new_version, $current_version, '>' ) ) {
-            $obj = new stdClass();
-            $obj->slug = $this->plugin_slug;
-            $obj->plugin = $this->basename;
-            $obj->new_version = $new_version;
-            $obj->url = "https://github.com/{$this->gh_user}/{$this->gh_repo}";
-            $obj->package = $release->zipball_url;
-            $transient->response[ $this->basename ] = $obj;
+    public function info( $response, $action, $args ) {
+        if ( 'plugin_information' !== $action ) {
+            return $response;
         }
+
+        if ( empty( $args->slug ) || $this->plugin_slug !== $args->slug ) {
+            return $response;
+        }
+
+        $remote = $this->request();
+
+        if ( ! $remote ) {
+            return $response;
+        }
+
+        $response = new \stdClass();
+        $remote_version = isset( $remote->tag_name ) ? ltrim( $remote->tag_name, 'vV' ) : $this->version;
+        $zip_url = isset( $remote->tag_name ) ? 'https://github.com/' . $this->repo_owner . '/' . $this->repo_name . '/archive/refs/tags/' . $remote->tag_name . '.zip' : '';
+
+        $response->name          = $this->plugin_name;
+        $response->slug          = $this->plugin_slug;
+        $response->version       = $remote_version;
+        $response->author        = $this->repo_owner;
+        $response->homepage      = 'https://github.com/' . $this->repo_owner . '/' . $this->repo_name;
+        $response->download_link = $zip_url;
+        $response->trunk         = $zip_url;
+        $response->last_updated  = isset( $remote->published_at ) ? $remote->published_at : '';
+
+        $response->sections = [
+            'description'  => $this->plugin_name . ' auto-updates from GitHub releases.',
+            'installation' => 'Install as a standard WordPress plugin.',
+            'changelog'    => isset( $remote->body ) ? $remote->body : '',
+        ];
+
+        return $response;
+    }
+
+    public function update( $transient ) {
+        if ( empty( $transient->checked ) ) {
+            return $transient;
+        }
+
+        $remote = $this->request();
+
+        if ( $remote && isset( $remote->tag_name ) ) {
+            $remote_version = ltrim( $remote->tag_name, 'vV' );
+            if ( version_compare( $this->version, $remote_version, '<' ) ) {
+                $response              = new \stdClass();
+                $response->slug        = $this->plugin_slug;
+                $response->plugin      = $this->plugin_slug . '/' . $this->plugin_file;
+                $response->new_version = $remote_version;
+                $response->package     = 'https://github.com/' . $this->repo_owner . '/' . $this->repo_name . '/archive/refs/tags/' . $remote->tag_name . '.zip';
+
+                $transient->response[ $response->plugin ] = $response;
+            }
+        }
+
         return $transient;
     }
 
-    public function plugin_popup( $result, $action, $args ) {
-        if ( $action !== 'plugin_information' || $args->slug !== $this->plugin_slug ) return $result;
-        $release = $this->get_github_release();
-        if ( ! $release ) return $result;
-
-        $changelog = $release->body ?? '';
-
-        $res = new stdClass();
-        $res->name = 'RM GitHub Plugin';
-        $res->slug = $this->plugin_slug;
-        $res->version = ltrim( $release->tag_name, 'v' );
-        $res->download_link = $release->zipball_url;
-        $res->sections = [
-            'description' => 'Updates hosted on GitHub.',
-            // Sanitize release body to avoid arbitrary HTML from GitHub notes
-            'changelog'   => wp_kses_post( wpautop( $changelog ) ),
-        ];
-        return $res;
+    public function purge( $upgrader, $options ) {
+        if ( $this->cache_allowed && 'update' === $options['action'] && 'plugin' === $options['type'] ) {
+            delete_transient( $this->cache_key );
+        }
     }
 
     /**
      * Add auth headers to GitHub API and package downloads when a token is configured.
      */
     public function maybe_authenticate_download( $args, $url ) {
-        if ( ! $this->gh_token ) return $args;
+        if ( ! $this->auth_token ) {
+            return $args;
+        }
+
         $is_github = strpos( $url, 'github.com' ) !== false || strpos( $url, 'api.github.com' ) !== false;
-        if ( ! $is_github ) return $args;
+        if ( ! $is_github ) {
+            return $args;
+        }
 
         if ( empty( $args['headers'] ) || ! is_array( $args['headers'] ) ) {
             $args['headers'] = [];
         }
-        // Preserve existing headers and add auth + UA for rate limits/private repos
-        $args['headers']['Authorization'] = 'token ' . $this->gh_token;
-        $args['headers']['User-Agent'] = $args['headers']['User-Agent'] ?? 'WordPress/' . get_bloginfo( 'version' );
+
+        $args['headers']['Authorization'] = 'token ' . $this->auth_token;
+        $args['headers']['User-Agent']    = $args['headers']['User-Agent'] ?? 'WordPress/' . get_bloginfo( 'version' );
+
         return $args;
     }
 
-    /**
-     * Ensure the unpacked folder matches the plugin slug so updates overwrite correctly.
-     */
-    public function ensure_correct_folder( $source, $remote_source, $upgrader, $hook_extra ) {
-        if ( empty( $hook_extra['plugin'] ) || $hook_extra['plugin'] !== $this->basename ) return $source;
-        $desired = trailingslashit( $remote_source ) . $this->plugin_slug;
-        $source = untrailingslashit( $source );
-
-        if ( basename( $source ) === $this->plugin_slug ) return $source; // Already correct
-
-        // Try to rename the extracted folder to the plugin slug to match WordPress expectations
-        if ( @rename( $source, $desired ) ) {
-            return $desired;
-        }
-
-        // Fallback: if rename fails, leave as-is to avoid breaking the upgrade
-        return $source;
-    }
-
-    // --- MANUAL CHECK LOGIC ---
+    // --- Manual check helpers ---
     public function add_check_link( $links ) {
-        $check_url = add_query_arg( [ 'gh_check' => $this->plugin_slug, 'nonce' => wp_create_nonce( 'gh_check' ) ], admin_url( 'plugins.php' ) );
-        $links['check_update'] = '<a href="' . esc_url( $check_url ) . '">Check for Updates</a>';
+        $check_url = add_query_arg(
+            [
+                'gh_check' => $this->plugin_slug,
+                'nonce'    => wp_create_nonce( 'gh_check' ),
+            ],
+            admin_url( 'plugins.php' )
+        );
+
+        $links['rm_gh_check'] = '<a href="' . esc_url( $check_url ) . '">Check for updates</a>';
         return $links;
     }
 
     public function process_manual_check() {
-        $gh_check = sanitize_text_field( wp_unslash( $_GET['gh_check'] ?? '' ) );
-        $nonce    = sanitize_text_field( wp_unslash( $_GET['nonce'] ?? '' ) );
+        $gh_check = isset( $_GET['gh_check'] ) ? sanitize_text_field( wp_unslash( $_GET['gh_check'] ) ) : '';
+        $nonce    = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : '';
 
-        if ( $gh_check !== $this->plugin_slug ) return;
-        if ( ! current_user_can( 'update_plugins' ) || ! wp_verify_nonce( $nonce, 'gh_check' ) ) return;
-        
+        if ( $gh_check !== $this->plugin_slug ) {
+            return;
+        }
+
+        if ( ! current_user_can( 'update_plugins' ) || ! wp_verify_nonce( $nonce, 'gh_check' ) ) {
+            return;
+        }
+
         delete_site_transient( 'update_plugins' );
-        wp_redirect( admin_url( 'plugins.php?updated=1' ) );
+        wp_safe_redirect( admin_url( 'plugins.php?rm_gh_checked=1' ) );
         exit;
     }
 }
+
+?>
