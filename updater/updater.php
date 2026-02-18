@@ -30,7 +30,7 @@ class Updater {
         $this->plugin_slug   = dirname( plugin_basename( __DIR__ ) );
         $this->version       = defined( 'RM_GITHUB_PLUGIN_VERSION' ) ? \RM_GITHUB_PLUGIN_VERSION : '1.0.0';
         $this->cache_key     = 'rm_github_plugin_updater';
-        $this->cache_allowed = false; // cache GitHub responses to avoid rate limits
+        $this->cache_allowed = true; // cache GitHub responses to avoid rate limits
         $this->basename      = $this->plugin_slug . '/' . $this->plugin_file;
         $this->auth_token    = defined( 'RM_GITHUB_PLUGIN_TOKEN' ) ? RM_GITHUB_PLUGIN_TOKEN : '';
 
@@ -38,10 +38,11 @@ class Updater {
         add_filter( 'site_transient_update_plugins', [ $this, 'update' ] );
         add_action( 'upgrader_process_complete', [ $this, 'purge' ], 10, 2 );
 
-        // Optional helpers: auth headers for GitHub + manual "Check for updates" link
+        // --- Optional Manual check helpers (removable for production UI): auth headers + manual "Check for updates" link
         add_filter( 'http_request_args', [ $this, 'maybe_authenticate_download' ], 10, 2 );
         add_filter( "plugin_action_links_{$this->basename}", [ $this, 'add_check_link' ] );
         add_action( 'admin_init', [ $this, 'process_manual_check' ] );
+        // --- END Optional Manual check helpers (removable for production UI): auth headers + manual "Check for updates" link
     }
 
     private function request() {
@@ -171,6 +172,9 @@ class Updater {
         return $links;
     }
 
+    // --- END Manual check helpers ---
+
+    // --- Manual check helpers ---
     public function process_manual_check() {
         $gh_check = isset( $_GET['gh_check'] ) ? sanitize_text_field( wp_unslash( $_GET['gh_check'] ) ) : '';
         $nonce    = isset( $_GET['nonce'] ) ? sanitize_text_field( wp_unslash( $_GET['nonce'] ) ) : '';
@@ -187,6 +191,8 @@ class Updater {
         wp_safe_redirect( admin_url( 'plugins.php?rm_gh_checked=1' ) );
         exit;
     }
+
+    // --- END Manual check helpers ---
 }
 
 ?>
